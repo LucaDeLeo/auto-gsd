@@ -109,9 +109,6 @@ bash scripts/sprint.sh --from-phase 5
 
 # Force restart (clears stale state)
 bash scripts/sprint.sh --force
-
-# Set weekly API budget cap (default: $200)
-bash scripts/sprint.sh --budget 100
 ```
 
 ### Modes
@@ -157,20 +154,9 @@ sprint_helpers.py   Everything else:
                       - Consolidator (merges findings, drives fix sessions)
                       - State file management (MILESTONE-SPRINT.md)
                       - Prompt builders for each session type
-                      - Terminal formatting and usage tracking
+                      - Terminal formatting
 sprint_signals.py   GSD signal detection — maps output signals to exit codes
 ```
-
-## Cost tracking
-
-The sprint tracks API usage per session and per phase:
-
-```
-  cost │ $0.42 (12K in, 3K out) — phase $1.85
-  cost │ phase total: $1.85 (45K in, 12K out, 8 turns, 4m 32s)
-```
-
-At completion, it shows total spend, burn rate ($/hr), and remaining weekly budget.
 
 ## License
 

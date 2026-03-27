@@ -198,7 +198,6 @@ _LBL_AUDIT = f"  {_MAGENTA}audit{_RESET}{_DIM}│{_RESET} "
 _LBL_COMPL = f"  {_MAGENTA}compl{_RESET}{_DIM}│{_RESET} "
 _LBL_CLEAN = f"  {_DIM}clean{_RESET}{_DIM}│{_RESET} "
 _LBL_GIT = f"  {_GREEN}git  {_RESET}{_DIM}│{_RESET} "
-_LBL_COST = f"  {_YELLOW}cost {_RESET}{_DIM}│{_RESET} "
 _LBL_REUSE = f"  {_GREEN}reuse{_RESET}{_DIM}│{_RESET} "
 _LBL_QUAL = f"  {_CYAN}qual {_RESET}{_DIM}│{_RESET} "
 _LBL_EFFIC = f"  {_YELLOW}effic{_RESET}{_DIM}│{_RESET} "
@@ -209,112 +208,6 @@ def _labeled_print(label: str, text: str) -> None:
     for line in text.splitlines():
         print(f"{label}{line}")
 
-
-# ═══════════════════════════════════════════════════════════════
-# USAGE TRACKING
-# ═══════════════════════════════════════════════════════════════
-
-
-@dataclass
-class SessionUsage:
-    cost_usd: float
-    input_tokens: int
-    output_tokens: int
-    cache_read_tokens: int
-    cache_write_tokens: int
-    duration_ms: int
-    num_turns: int
-    label: str
-
-
-class UsageTracker:
-    def __init__(self, weekly_budget_usd: float = 200.0):
-        self._sessions: list[SessionUsage] = []
-        self._phase_start_idx: int = 0
-        self._sprint_start: float = time.time()
-        self.weekly_budget_usd = weekly_budget_usd
-
-    def add(self, result_msg: object, label: str) -> SessionUsage | None:
-        if result_msg is None:
-            return None
-        usage = getattr(result_msg, "usage", {}) or {}
-        su = SessionUsage(
-            cost_usd=getattr(result_msg, "total_cost_usd", 0.0) or 0.0,
-            input_tokens=usage.get("input_tokens", 0),
-            output_tokens=usage.get("output_tokens", 0),
-            cache_read_tokens=usage.get("cache_read_input_tokens", 0),
-            cache_write_tokens=usage.get("cache_creation_input_tokens", 0),
-            duration_ms=getattr(result_msg, "duration_ms", 0) or 0,
-            num_turns=getattr(result_msg, "num_turns", 0) or 0,
-            label=label,
-        )
-        self._sessions.append(su)
-        return su
-
-    def phase_totals(self) -> dict:
-        sessions = self._sessions[self._phase_start_idx:]
-        return {
-            "cost_usd": sum(s.cost_usd for s in sessions),
-            "input_tokens": sum(s.input_tokens for s in sessions),
-            "output_tokens": sum(s.output_tokens for s in sessions),
-            "duration_ms": sum(s.duration_ms for s in sessions),
-            "num_turns": sum(s.num_turns for s in sessions),
-        }
-
-    def sprint_totals(self) -> dict:
-        return {
-            "cost_usd": sum(s.cost_usd for s in self._sessions),
-            "input_tokens": sum(s.input_tokens for s in self._sessions),
-            "output_tokens": sum(s.output_tokens for s in self._sessions),
-            "duration_ms": sum(s.duration_ms for s in self._sessions),
-            "num_turns": sum(s.num_turns for s in self._sessions),
-        }
-
-    def mark_phase_boundary(self) -> None:
-        self._phase_start_idx = len(self._sessions)
-
-    def burn_rate_per_hour(self) -> float:
-        elapsed_h = (time.time() - self._sprint_start) / 3600
-        if elapsed_h < 0.001:
-            return 0.0
-        return self.sprint_totals()["cost_usd"] / elapsed_h
-
-    def weekly_hours_remaining(self) -> float:
-        rate = self.burn_rate_per_hour()
-        if rate < 0.001:
-            return float("inf")
-        return self.weekly_budget_usd / rate
-
-
-def _fmt_tokens(n: int) -> str:
-    if n >= 1_000_000:
-        return f"{n / 1_000_000:.1f}M"
-    if n >= 1_000:
-        return f"{n / 1_000:.0f}K"
-    return str(n)
-
-
-def print_session_usage(su: SessionUsage | None, tracker: UsageTracker) -> None:
-    if su is None:
-        return
-    phase = tracker.phase_totals()
-    print(
-        f"{_LBL_COST}${su.cost_usd:.2f} "
-        f"({_fmt_tokens(su.input_tokens)} in, {_fmt_tokens(su.output_tokens)} out) "
-        f"— phase ${phase['cost_usd']:.2f}"
-    )
-
-
-def print_phase_usage(tracker: UsageTracker) -> None:
-    s = tracker.phase_totals()
-    if s["cost_usd"] < 0.001:
-        return
-    dur_str = format_duration(s["duration_ms"] // 1000)
-    print(
-        f"{_LBL_COST}phase total: ${s['cost_usd']:.2f} "
-        f"({_fmt_tokens(s['input_tokens'])} in, {_fmt_tokens(s['output_tokens'])} out, "
-        f"{s['num_turns']} turns, {dur_str})"
-    )
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -408,20 +301,9 @@ def lifecycle_banner(milestone_version: str, milestone_name: str) -> None:
     print(f"  {_MAGENTA}{_BOLD}╚{'═' * width}╝{_RESET}")
 
 
-def sprint_complete_banner(phase_count: int, tracker: UsageTracker | None = None) -> None:
+def sprint_complete_banner(phase_count: int) -> None:
     """Print the final sprint complete banner."""
     lines = [f"  {phase_count} phases executed successfully"]
-    if tracker:
-        t = tracker.sprint_totals()
-        lines.append(
-            f"  ${t['cost_usd']:.2f} API cost "
-            f"({_fmt_tokens(t['input_tokens'])} in, {_fmt_tokens(t['output_tokens'])} out)"
-        )
-        rate = tracker.burn_rate_per_hour()
-        if rate > 0.001:
-            hrs = tracker.weekly_hours_remaining()
-            remaining = f"~{hrs / 24:.0f}d left this week" if hrs > 48 else f"~{hrs:.0f}h left this week"
-            lines.append(f"  burn: ${rate:.2f}/hr — {remaining}")
     width = max(max(len(l) for l in lines) + 2, 42)
     print()
     print(f"  {_GREEN}{_BOLD}╔{'═' * width}╗{_RESET}")
@@ -1425,7 +1307,6 @@ LOW issues (PASS_WITH_FIXES):
 
 async def _run_opus_validator(
     val_type: str, phase_num: str, phase_state: dict, round_num: int,
-    tracker: UsageTracker | None = None,
 ) -> ValidationResult:
     """Run Opus as a read-only validator. Returns parsed ValidationResult."""
     print(f"{_LBL_OPUS}{_DIM}starting {val_type} validation (round {round_num})...{_RESET}")
@@ -1435,9 +1316,7 @@ async def _run_opus_validator(
     exit_code, output, result_msg = await run_claude_session(
         prompt, label=_LBL_OPUS, model="claude-opus-4-6", timeout_minutes=15,
     )
-    if tracker:
-        su = tracker.add(result_msg, f"{val_type[:1]}-val")
-        print_session_usage(su, tracker)
+
 
     if exit_code == 1 and "[GSD:ERROR]" in output:
         result = ValidationResult(
@@ -1568,7 +1447,6 @@ Review the changes for efficiency:
 
 async def _run_simplify_validator(
     focus: str, prompt: str, label: str, round_num: int,
-    tracker: UsageTracker | None = None,
 ) -> ValidationResult:
     """Run one simplify review agent. Returns parsed ValidationResult."""
     print(f"{label}{_DIM}starting {focus} review (round {round_num})...{_RESET}")
@@ -1576,9 +1454,7 @@ async def _run_simplify_validator(
     exit_code, output, result_msg = await run_claude_session(
         prompt, label=label, model="claude-opus-4-6", timeout_minutes=15,
     )
-    if tracker:
-        su = tracker.add(result_msg, focus[:5])
-        print_session_usage(su, tracker)
+
 
     if exit_code == 1 and "[GSD:ERROR]" in output:
         result = ValidationResult(
@@ -1593,7 +1469,7 @@ async def _run_simplify_validator(
 
 
 async def _run_simplify_reviews(
-    round_num: int, tracker: UsageTracker | None = None,
+    round_num: int,
 ) -> list[ValidationResult]:
     """Run 3 simplify review agents in parallel. Returns [reuse, quality, efficiency] results."""
     print()
@@ -1602,9 +1478,9 @@ async def _run_simplify_reviews(
     print()
 
     reuse, quality, efficiency = await asyncio.gather(
-        _run_simplify_validator("reuse", _SIMPLIFY_REUSE_PROMPT, _LBL_REUSE, round_num, tracker=tracker),
-        _run_simplify_validator("quality", _SIMPLIFY_QUALITY_PROMPT, _LBL_QUAL, round_num, tracker=tracker),
-        _run_simplify_validator("efficiency", _SIMPLIFY_EFFICIENCY_PROMPT, _LBL_EFFIC, round_num, tracker=tracker),
+        _run_simplify_validator("reuse", _SIMPLIFY_REUSE_PROMPT, _LBL_REUSE, round_num),
+        _run_simplify_validator("quality", _SIMPLIFY_QUALITY_PROMPT, _LBL_QUAL, round_num),
+        _run_simplify_validator("efficiency", _SIMPLIFY_EFFICIENCY_PROMPT, _LBL_EFFIC, round_num),
     )
 
     # Print summary box
@@ -1675,16 +1551,13 @@ async def _run_consolidator(
     phase_state: dict,
     findings: dict[str, str],
     round_num: int,
-    tracker: UsageTracker | None = None,
 ) -> bool:
     """Run consolidator to fix combined findings. Returns True if FIX_COMPLETE."""
     prompt = _build_full_consolidator_prompt(
         val_type, phase_num, phase_state, findings, round_num,
     )
     _, output, result_msg = await run_claude_session(prompt, label=_LBL_FIX, timeout_minutes=20)
-    if tracker:
-        su = tracker.add(result_msg, "fix")
-        print_session_usage(su, tracker)
+
     return "[GSD:FIX_COMPLETE]" in output
 
 
@@ -1711,7 +1584,6 @@ async def run_parallel_validation(
     phase_state: dict,
     skip_codex: bool,
     max_rounds: int = 7,
-    tracker: UsageTracker | None = None,
 ) -> bool:
     """Run validators in parallel, consolidate on failure. Returns True if passed.
 
@@ -1728,14 +1600,14 @@ async def run_parallel_validation(
 
         if skip_codex:
             opus_result = await _run_opus_validator(
-                val_type, phase_num, phase_state, round_num, tracker=tracker,
+                val_type, phase_num, phase_state, round_num,
             )
             codex_result = ValidationResult(verdict="PASS", raw="", issues_text="")
         else:
             phase_dir = phase_state.get("phase_dir", "")
             opus_result, codex_result = await asyncio.gather(
                 _run_opus_validator(
-                    val_type, phase_num, phase_state, round_num, tracker=tracker,
+                    val_type, phase_num, phase_state, round_num,
                 ),
                 asyncio.to_thread(_run_codex_validator_sync, val_type, phase_num, phase_dir),
             )
@@ -1746,7 +1618,7 @@ async def run_parallel_validation(
         # ─── Simplify agents (code validation only, first round only) ───
         simplify_results: list[ValidationResult] = []
         if val_type == "code" and round_num == 1:
-            simplify_results = await _run_simplify_reviews(round_num, tracker=tracker)
+            simplify_results = await _run_simplify_reviews(round_num)
 
         # ─── Aggregate verdicts ───
         all_verdicts = [opus_result.verdict, codex_result.verdict]
@@ -1774,7 +1646,7 @@ async def run_parallel_validation(
             print(f"  {_YELLOW}INFO{_RESET} Low-severity issues only — fixing without re-validation")
             await _run_consolidator(
                 val_type, phase_num, phase_state,
-                findings, round_num, tracker=tracker,
+                findings, round_num,
             )
             log_validation_result(phase_num, val_type, combined_verdict, codex_result.verdict, "fixed low")
             return True
@@ -1801,7 +1673,7 @@ async def run_parallel_validation(
         print()
         fixed = await _run_consolidator(
             val_type, phase_num, phase_state,
-            findings, round_num, tracker=tracker,
+            findings, round_num,
         )
         if not fixed:
             print(f"  {_RED}{_BOLD}FAIL{_RESET} Consolidator failed to apply fixes")

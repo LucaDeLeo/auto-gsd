@@ -48,7 +48,6 @@ from sprint_helpers import (
     _RED,
     _RESET,
     _YELLOW,
-    UsageTracker,
     build_audit_prompt,
     build_cleanup_prompt,
     build_complete_prompt,
@@ -77,9 +76,7 @@ from sprint_helpers import (
     pause_for_review,
     phase_banner,
     phase_complete_banner,
-    print_phase_usage,
     print_preflight_result,
-    print_session_usage,
     read_verification_status,
     run_claude_session,
     run_parallel_validation,
@@ -103,7 +100,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--complete", action="store_true", help="Auto-complete milestone when done")
     parser.add_argument("--force", action="store_true", help="Force restart, removing stale state")
     parser.add_argument("--from-phase", default="", help="Start from phase N")
-    parser.add_argument("--budget", type=float, default=200.0, help="Weekly API cost budget in USD")
     return parser.parse_args()
 
 
@@ -195,8 +191,6 @@ async def main() -> None:
         mode = "yolo" if yolo_mode else "interactive"
         init_milestone_sprint(milestone_name, milestone_version, phase_queue, mode, auto_complete)
 
-    tracker = UsageTracker(weekly_budget_usd=args.budget)
-
     # ═══════════════════════════════════════════════════════════════
     # MAIN BANNER
     # ═══════════════════════════════════════════════════════════════
@@ -274,7 +268,6 @@ async def main() -> None:
             exit_code, output, result_msg = await run_claude_session(
                 prompt, label=_LBL_DISC, timeout_minutes=20,
             )
-            print_session_usage(tracker.add(result_msg, "disc"), tracker)
 
             if exit_code == 0:
                 print()
@@ -314,7 +307,7 @@ async def main() -> None:
 
             if phase_state.get("has_context"):
                 if not await run_parallel_validation(
-                    "context", phase_num, phase_state, skip_codex, tracker=tracker,
+                    "context", phase_num, phase_state, skip_codex,
                 ):
                     halt_milestone_sprint(f"Context validation failed for phase {phase_num}")
                     sys.exit(1)
@@ -343,7 +336,6 @@ async def main() -> None:
             exit_code, output, result_msg = await run_claude_session(
                 prompt, label=_LBL_PLAN, timeout_minutes=30,
             )
-            print_session_usage(tracker.add(result_msg, "plan"), tracker)
 
             if exit_code == 0:
                 print()
@@ -382,7 +374,7 @@ async def main() -> None:
 
             if phase_state.get("has_plans"):
                 if not await run_parallel_validation(
-                    "plan", phase_num, phase_state, skip_codex, tracker=tracker,
+                    "plan", phase_num, phase_state, skip_codex,
                 ):
                     halt_milestone_sprint(f"Plan validation failed for phase {phase_num}")
                     sys.exit(1)
@@ -400,7 +392,6 @@ async def main() -> None:
         exit_code, output, result_msg = await run_claude_session(
             prompt, label=_LBL_EXEC, timeout_minutes=60,
         )
-        print_session_usage(tracker.add(result_msg, "exec"), tracker)
 
         if exit_code == 0:
             print()
@@ -451,7 +442,7 @@ async def main() -> None:
                 pass
 
             if not await run_parallel_validation(
-                "code", phase_num, phase_state, skip_codex, tracker=tracker,
+                "code", phase_num, phase_state, skip_codex,
             ):
                 halt_milestone_sprint(f"Code validation failed for phase {phase_num}")
                 sys.exit(1)
@@ -493,8 +484,6 @@ async def main() -> None:
         log_milestone_phase_complete(phase_num, duration_str, codex_result, "")
 
         phase_complete_banner(phase_num, duration_str)
-        print_phase_usage(tracker)
-        tracker.mark_phase_boundary()
 
         # ─────────────────────────────────────────────────────────
         # RE-READ ROADMAP (catch inserted decimal phases)
@@ -543,7 +532,6 @@ async def main() -> None:
     exit_code, output, result_msg = await run_claude_session(
         prompt, label=_LBL_AUDIT, timeout_minutes=30,
     )
-    print_session_usage(tracker.add(result_msg, "audit"), tracker)
 
     audit_duration = format_duration(int(time.time()) - audit_start)
 
@@ -565,7 +553,6 @@ async def main() -> None:
         exit_code, output, result_msg = await run_claude_session(
             prompt, label=_LBL_COMPL, timeout_minutes=15,
         )
-        print_session_usage(tracker.add(result_msg, "complete"), tracker)
 
         if exit_code == 0:
             ok_msg(f"Milestone '{milestone_name}' completed and archived")
@@ -577,7 +564,6 @@ async def main() -> None:
         exit_code, output, result_msg = await run_claude_session(
             prompt, label=_LBL_CLEAN, timeout_minutes=10,
         )
-        print_session_usage(tracker.add(result_msg, "cleanup"), tracker)
 
     else:
         print()
@@ -591,7 +577,7 @@ async def main() -> None:
 
     finalize_milestone_sprint()
 
-    sprint_complete_banner(completed_count, tracker)
+    sprint_complete_banner(completed_count)
     dim_msg(f"Sprint log: {MILESTONE_SPRINT_FILE}")
 
 
